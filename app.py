@@ -1,7 +1,6 @@
 from flask import Flask, jsonify, render_template
 import requests
 import pandas as pd
-import pandas_ta as ta
 import numpy as np
 from datetime import datetime
 
@@ -12,7 +11,33 @@ PAIRS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT"}
 TIMEFRAMES = {"1h": "1h", "4h": "4h", "1d": "1d"}
 
 
-def fetch_klines(symbol: str, interval: str, limit: int = 200) -> pd.DataFrame:
+# ── Indicadores manuais (sem pandas-ta) ──
+
+def calc_ema(series: pd.Series, length: int) -> pd.Series:
+    return series.ewm(span=length, adjust=False).mean()
+
+def calc_sma(series: pd.Series, length: int) -> pd.Series:
+    return series.rolling(window=length).mean()
+
+def calc_rsi(series: pd.Series, length: int = 14) -> pd.Series:
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(com=length - 1, min_periods=length).mean()
+    avg_loss = loss.ewm(com=length - 1, min_periods=length).mean()
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+def calc_macd(series: pd.Series, fast=12, slow=26, signal=9):
+    ema_fast = calc_ema(series, fast)
+    ema_slow = calc_ema(series, slow)
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    histogram = macd_line - signal_line
+    return macd_line, signal_line, histogram
+
+
+def fetch_klines(symbol: str, interval: str, limit: int = 250) -> pd.DataFrame:
     url = f"{BINANCE_BASE}/klines"
     params = {"symbol": symbol, "interval": interval, "limit": limit}
     resp = requests.get(url, params=params, timeout=10)
@@ -31,16 +56,13 @@ def fetch_klines(symbol: str, interval: str, limit: int = 200) -> pd.DataFrame:
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    df["rsi"] = ta.rsi(df["close"], length=14)
-    df["ema9"] = ta.ema(df["close"], length=9)
-    df["ema21"] = ta.ema(df["close"], length=21)
-    df["ema50"] = ta.ema(df["close"], length=50)
-    df["ema200"] = ta.ema(df["close"], length=200)
-    macd = ta.macd(df["close"], fast=12, slow=26, signal=9)
-    df["macd"] = macd["MACD_12_26_9"]
-    df["macd_signal"] = macd["MACDs_12_26_9"]
-    df["macd_hist"] = macd["MACDh_12_26_9"]
-    df["vol_ma20"] = ta.sma(df["volume"], length=20)
+    df["rsi"] = calc_rsi(df["close"], 14)
+    df["ema9"] = calc_ema(df["close"], 9)
+    df["ema21"] = calc_ema(df["close"], 21)
+    df["ema50"] = calc_ema(df["close"], 50)
+    df["ema200"] = calc_ema(df["close"], 200)
+    df["macd"], df["macd_signal"], df["macd_hist"] = calc_macd(df["close"])
+    df["vol_ma20"] = calc_sma(df["volume"], 20)
     return df
 
 
@@ -66,29 +88,24 @@ def generate_signal(df: pd.DataFrame) -> dict:
         warnings.append(f"RSI sobrecomprado ({rsi:.1f}) — evitar entrada")
 
     price = row["close"]
-    ema200 = row["ema200"]
-    ema50 = row["ema50"]
-    ema21 = row["ema21"]
-    ema9 = row["ema9"]
-
-    if price > ema200:
+    if price > row["ema200"]:
         score += 1
         reasons.append("Preço acima da EMA 200 (tendência de alta)")
     else:
         score -= 1
         warnings.append("Preço abaixo da EMA 200 (tendência de baixa)")
 
-    if ema9 > ema21 and prev["ema9"] <= prev["ema21"]:
+    if row["ema9"] > row["ema21"] and prev["ema9"] <= prev["ema21"]:
         score += 2
         reasons.append("Cruzamento de alta: EMA 9 cruzou acima da EMA 21")
-    elif ema9 > ema21:
+    elif row["ema9"] > row["ema21"]:
         score += 1
         reasons.append("EMA 9 acima da EMA 21 (momentum positivo)")
-    elif ema9 < ema21:
+    else:
         score -= 1
         warnings.append("EMA 9 abaixo da EMA 21 (momentum negativo)")
 
-    if price > ema50 and prev["close"] <= prev["ema50"]:
+    if price > row["ema50"] and prev["close"] <= prev["ema50"]:
         score += 2
         reasons.append("Rompimento acima da EMA 50")
 
@@ -103,7 +120,7 @@ def generate_signal(df: pd.DataFrame) -> dict:
     elif macd > macd_sig:
         score += 1
         reasons.append("MACD positivo (bull)")
-    elif macd < macd_sig:
+    else:
         score -= 1
         warnings.append("MACD negativo (bear)")
 
@@ -125,36 +142,24 @@ def generate_signal(df: pd.DataFrame) -> dict:
 
     if score >= 6:
         signal = "FORTE COMPRA"
-        color = "#00e676"
-        emoji = "🟢🟢"
     elif score >= 3:
         signal = "COMPRA"
-        color = "#69f0ae"
-        emoji = "🟢"
     elif score >= 1:
         signal = "NEUTRO"
-        color = "#ffd740"
-        emoji = "🟡"
     elif score >= -1:
         signal = "AGUARDAR"
-        color = "#ff9100"
-        emoji = "🟠"
     else:
         signal = "NÃO COMPRAR"
-        color = "#ff5252"
-        emoji = "🔴"
 
     return {
         "signal": signal,
-        "color": color,
-        "emoji": emoji,
         "score": round(score, 1),
         "rsi": round(rsi, 2),
         "price": round(price, 2),
-        "ema9": round(ema9, 2),
-        "ema21": round(ema21, 2),
-        "ema50": round(ema50, 2),
-        "ema200": round(ema200, 2),
+        "ema9": round(row["ema9"], 2),
+        "ema21": round(row["ema21"], 2),
+        "ema50": round(row["ema50"], 2),
+        "ema200": round(row["ema200"], 2),
         "macd": round(macd, 4),
         "macd_signal": round(macd_sig, 4),
         "volume": round(vol, 2),
@@ -165,24 +170,25 @@ def generate_signal(df: pd.DataFrame) -> dict:
 
 
 def build_chart_data(df: pd.DataFrame) -> list:
-    last60 = df.tail(60)
     candles = []
-    for _, row in last60.iterrows():
+    for _, row in df.tail(60).iterrows():
+        def safe(v):
+            return round(float(v), 6) if pd.notna(v) and not np.isinf(v) else None
         candles.append({
             "time": int(row["open_time"].timestamp()),
-            "open": round(row["open"], 4),
-            "high": round(row["high"], 4),
-            "low": round(row["low"], 4),
-            "close": round(row["close"], 4),
-            "volume": round(row["volume"], 4),
-            "ema9": round(row["ema9"], 4) if not np.isnan(row["ema9"]) else None,
-            "ema21": round(row["ema21"], 4) if not np.isnan(row["ema21"]) else None,
-            "ema50": round(row["ema50"], 4) if not np.isnan(row["ema50"]) else None,
-            "ema200": round(row["ema200"], 4) if not np.isnan(row["ema200"]) else None,
-            "macd": round(row["macd"], 6) if not np.isnan(row["macd"]) else None,
-            "macd_signal": round(row["macd_signal"], 6) if not np.isnan(row["macd_signal"]) else None,
-            "macd_hist": round(row["macd_hist"], 6) if not np.isnan(row["macd_hist"]) else None,
-            "rsi": round(row["rsi"], 2) if not np.isnan(row["rsi"]) else None,
+            "open": safe(row["open"]),
+            "high": safe(row["high"]),
+            "low": safe(row["low"]),
+            "close": safe(row["close"]),
+            "volume": safe(row["volume"]),
+            "ema9": safe(row["ema9"]),
+            "ema21": safe(row["ema21"]),
+            "ema50": safe(row["ema50"]),
+            "ema200": safe(row["ema200"]),
+            "macd": safe(row["macd"]),
+            "macd_signal": safe(row["macd_signal"]),
+            "macd_hist": safe(row["macd_hist"]),
+            "rsi": safe(row["rsi"]),
         })
     return candles
 
@@ -197,16 +203,21 @@ def analysis(timeframe):
     if timeframe not in TIMEFRAMES:
         return jsonify({"error": "Timeframe inválido"}), 400
 
-    interval = TIMEFRAMES[timeframe]
-    result = {"timeframe": timeframe, "updated_at": datetime.now().strftime("%d/%m/%Y %H:%M:%S"), "assets": {}}
+    result = {
+        "timeframe": timeframe,
+        "updated_at": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+        "assets": {}
+    }
 
     for asset, symbol in PAIRS.items():
         try:
-            df = fetch_klines(symbol, interval, limit=250)
+            df = fetch_klines(symbol, TIMEFRAMES[timeframe], limit=250)
             df = compute_indicators(df)
-            signal = generate_signal(df)
-            chart = build_chart_data(df)
-            result["assets"][asset] = {"symbol": symbol, "signal": signal, "chart": chart}
+            result["assets"][asset] = {
+                "symbol": symbol,
+                "signal": generate_signal(df),
+                "chart": build_chart_data(df),
+            }
         except Exception as e:
             result["assets"][asset] = {"error": str(e)}
 
