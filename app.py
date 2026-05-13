@@ -6,9 +6,10 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-BINANCE_BASE = "https://api.binance.com/api/v3"
-PAIRS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT"}
-TIMEFRAMES = {"1h": "1h", "4h": "4h", "1d": "1d"}
+# CryptoCompare — funciona de qualquer servidor cloud (sem bloqueio de IP)
+CC_BASE = "https://min-api.cryptocompare.com/data/v2"
+PAIRS = {"BTC": "BTC", "ETH": "ETH"}
+TIMEFRAMES = {"1h": "histohour", "4h": "histohour", "1d": "histoday"}
 
 
 # ── Indicadores manuais (sem pandas-ta) ──
@@ -37,21 +38,38 @@ def calc_macd(series: pd.Series, fast=12, slow=26, signal=9):
     return macd_line, signal_line, histogram
 
 
-def fetch_klines(symbol: str, interval: str, limit: int = 250) -> pd.DataFrame:
-    url = f"{BINANCE_BASE}/klines"
-    params = {"symbol": symbol, "interval": interval, "limit": limit}
+def fetch_klines(symbol: str, timeframe: str) -> pd.DataFrame:
+    # 4H: busca 1000 candles de 1h e reamostra em 4h
+    endpoint = TIMEFRAMES[timeframe]
+    limit = 1000 if timeframe == "4h" else 250
+
+    url = f"{CC_BASE}/{endpoint}"
+    params = {"fsym": symbol, "tsym": "USDT", "limit": limit}
     resp = requests.get(url, params=params, timeout=10)
     resp.raise_for_status()
     raw = resp.json()
-    df = pd.DataFrame(raw, columns=[
-        "open_time", "open", "high", "low", "close", "volume",
-        "close_time", "quote_volume", "trades", "taker_buy_base",
-        "taker_buy_quote", "ignore"
-    ])
-    for col in ["open", "high", "low", "close", "volume"]:
-        df[col] = df[col].astype(float)
-    df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
-    return df[["open_time", "open", "high", "low", "close", "volume"]]
+
+    if raw.get("Response") == "Error":
+        raise ValueError(raw.get("Message", "CryptoCompare error"))
+
+    candles = raw["Data"]["Data"]
+    df = pd.DataFrame(candles)
+    df = df.rename(columns={"time": "open_time", "volumefrom": "volume"})
+    df["open_time"] = pd.to_datetime(df["open_time"], unit="s")
+    df = df[["open_time", "open", "high", "low", "close", "volume"]].astype(
+        {"open": float, "high": float, "low": float, "close": float, "volume": float}
+    )
+
+    if timeframe == "4h":
+        df = df.set_index("open_time").resample("4h").agg(
+            open=("open", "first"),
+            high=("high", "max"),
+            low=("low", "min"),
+            close=("close", "last"),
+            volume=("volume", "sum"),
+        ).dropna().reset_index()
+
+    return df
 
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -211,7 +229,7 @@ def analysis(timeframe):
 
     for asset, symbol in PAIRS.items():
         try:
-            df = fetch_klines(symbol, TIMEFRAMES[timeframe], limit=250)
+            df = fetch_klines(symbol, timeframe)
             df = compute_indicators(df)
             result["assets"][asset] = {
                 "symbol": symbol,
