@@ -303,7 +303,28 @@ def analysis(timeframe):
 
 @app.route("/api/config", methods=["GET"])
 def get_config():
-    return jsonify(get_alert_config())
+    cfg = get_alert_config()
+    cfg["telegram_configured"] = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+    cfg["supabase_configured"] = bool(SUPABASE_URL and SUPABASE_KEY)
+    return jsonify(cfg)
+
+
+@app.route("/api/test-telegram")
+def test_telegram():
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return jsonify({"ok": False, "error": "Token ou chat_id não configurado"}), 400
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": "✅ *VelaSignal conectado!*\n\nAlertas de compra BTC/ETH ativos.", "parse_mode": "Markdown"},
+            timeout=8,
+        )
+        data = r.json()
+        if data.get("ok"):
+            return jsonify({"ok": True})
+        return jsonify({"ok": False, "error": data.get("description", "Erro desconhecido")}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/config", methods=["POST"])

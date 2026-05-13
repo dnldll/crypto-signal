@@ -656,6 +656,7 @@
 
     <div class="modal-actions">
       <button class="btn-ghost" onclick="closeSettings()">Fechar</button>
+      <button class="btn-ghost" id="testTgBtn" onclick="testTelegram()">Testar Telegram</button>
       <button class="btn-primary" id="saveConfigBtn" onclick="saveConfig()">Salvar</button>
     </div>
   </div>
@@ -999,21 +1000,42 @@ async function checkStatuses() {
     const cfg = await fetch('/api/config').then(r => r.json());
     setLevel(cfg.min_level || 1);
 
-    const hasSb = cfg.min_level !== undefined;
+    const hasSb = cfg.supabase_configured;
     document.getElementById('dot-sb').className = 'status-dot ' + (hasSb ? 'ok' : 'warn');
     document.getElementById('tag-sb').textContent = hasSb ? 'conectado' : 'sem credenciais';
 
-    // count history rows as proxy for telegram working
+    const hasTg = cfg.telegram_configured;
+    TELEGRAM_CONFIGURED = hasTg;
+    document.getElementById('dot-tg').className = 'status-dot ' + (hasTg ? 'ok' : 'off');
+    document.getElementById('tag-tg').textContent = hasTg ? 'configurado' : 'sem token/chat_id';
+
     const hist = await fetch(`/api/history/BTC/${currentTf}`).then(r => r.json());
     const count = Array.isArray(hist) ? hist.length : 0;
     document.getElementById('total-analyses').textContent =
       count > 0 ? `${count} análises salvas (BTC · ${currentTf.toUpperCase()})` : 'Nenhuma análise salva ainda';
-
-    document.getElementById('dot-tg').className = 'status-dot ' + (TELEGRAM_CONFIGURED ? 'ok' : 'off');
-    document.getElementById('tag-tg').textContent = TELEGRAM_CONFIGURED ? 'configurado' : 'sem token/chat_id';
   } catch(e) {
     document.getElementById('dot-sb').className = 'status-dot warn';
     document.getElementById('tag-sb').textContent = 'erro de conexão';
+  }
+}
+
+async function testTelegram() {
+  const btn = document.getElementById('testTgBtn');
+  btn.textContent = 'Enviando...';
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/test-telegram');
+    const data = await r.json();
+    if (data.ok) {
+      btn.textContent = 'Enviado ✓';
+      setTimeout(() => { btn.textContent = 'Testar Telegram'; btn.disabled = false; }, 3000);
+    } else {
+      btn.textContent = 'Erro: ' + (data.error || 'falhou');
+      setTimeout(() => { btn.textContent = 'Testar Telegram'; btn.disabled = false; }, 4000);
+    }
+  } catch(e) {
+    btn.textContent = 'Erro de rede';
+    setTimeout(() => { btn.textContent = 'Testar Telegram'; btn.disabled = false; }, 3000);
   }
 }
 
