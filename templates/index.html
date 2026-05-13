@@ -426,6 +426,140 @@
     font-family: 'Space Mono', monospace;
   }
 
+  /* ── SETTINGS MODAL ── */
+  .modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    backdrop-filter: blur(4px);
+    z-index: 200;
+    display: none;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 14px;
+    padding: 28px;
+    width: 420px;
+    max-width: calc(100vw - 32px);
+  }
+  .modal-title {
+    font-size: 1rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .modal-sub {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-bottom: 24px;
+    font-family: 'Space Mono', monospace;
+  }
+  .form-group { margin-bottom: 18px; }
+  .form-label {
+    font-size: 0.68rem;
+    font-family: 'Space Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin-bottom: 8px;
+    display: block;
+  }
+  .level-toggle {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .level-btn {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    padding: 10px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: 'Space Grotesk', sans-serif;
+    transition: all 0.15s;
+    text-align: center;
+  }
+  .level-btn + .level-btn { border-left: 1px solid var(--border); }
+  .level-btn.active { background: var(--green); color: #fff; }
+  .level-btn.active.strong { background: var(--accent); }
+
+  .status-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 10px;
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .status-dot.ok { background: var(--green); }
+  .status-dot.off { background: var(--muted2); }
+  .status-dot.warn { background: var(--yellow); }
+  .status-name { font-size: 0.82rem; font-weight: 600; flex: 1; }
+  .status-tag { font-size: 0.7rem; font-family: 'Space Mono', monospace; color: var(--muted); }
+
+  .modal-actions {
+    display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px;
+  }
+  .btn-ghost {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--muted); padding: 8px 16px; border-radius: 8px;
+    cursor: pointer; font-size: 0.82rem; font-family: 'Space Grotesk', sans-serif;
+    transition: all 0.15s;
+  }
+  .btn-ghost:hover { color: var(--text); border-color: var(--border2); }
+  .btn-primary {
+    background: var(--accent); border: none; color: #fff;
+    padding: 8px 18px; border-radius: 8px;
+    cursor: pointer; font-size: 0.82rem; font-weight: 600;
+    font-family: 'Space Grotesk', sans-serif;
+    transition: opacity 0.15s;
+  }
+  .btn-primary:hover { opacity: 0.85; }
+
+  /* ── HISTORY ── */
+  .history-section { margin-top: 32px; }
+  .history-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .history-grid { grid-template-columns: 1fr; } }
+  .history-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .history-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .history-title { font-size: 0.8rem; font-weight: 600; }
+  .history-sub { font-size: 0.68rem; font-family: 'Space Mono', monospace; color: var(--muted); }
+  .history-table { width: 100%; border-collapse: collapse; }
+  .history-table th {
+    font-size: 0.62rem; font-family: 'Space Mono', monospace;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted2); text-align: left; padding: 10px 14px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .history-table td {
+    font-size: 0.78rem; padding: 9px 14px;
+    border-bottom: 1px solid var(--border);
+    font-family: 'Space Mono', monospace;
+  }
+  .history-table tr:last-child td { border-bottom: none; }
+  .history-table tr:hover td { background: var(--surface2); }
+  .h-pill {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 0.68rem; font-weight: 600;
+  }
+
   /* ── FOOTER ── */
   footer {
     border-top: 1px solid var(--border);
@@ -464,8 +598,55 @@
       <button class="tf-btn" data-tf="1d">1D</button>
     </div>
     <button class="refresh-btn" id="refreshBtn" title="Atualizar">↻</button>
+    <button class="refresh-btn" id="settingsBtn" title="Configurações">⚙</button>
   </div>
 </header>
+
+<!-- SETTINGS MODAL -->
+<div class="modal-overlay" id="settingsModal">
+  <div class="modal">
+    <div class="modal-title">Configurações de alerta</div>
+    <div class="modal-sub">Telegram · Supabase</div>
+
+    <div class="form-group">
+      <label class="form-label">Nível mínimo para disparar alerta</label>
+      <div class="level-toggle">
+        <button class="level-btn active" id="lvl1" onclick="setLevel(1)">
+          🟢 COMPRA<br><small style="opacity:.6;font-size:.7rem">Score ≥ 3</small>
+        </button>
+        <button class="level-btn strong" id="lvl2" onclick="setLevel(2)">
+          🟢🟢 FORTE COMPRA<br><small style="opacity:.6;font-size:.7rem">Score ≥ 6</small>
+        </button>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Status das integrações</label>
+      <div class="status-row">
+        <div class="status-dot" id="dot-sb"></div>
+        <span class="status-name">Supabase</span>
+        <span class="status-tag" id="tag-sb">verificando...</span>
+      </div>
+      <div class="status-row">
+        <div class="status-dot" id="dot-tg"></div>
+        <span class="status-name">Telegram Bot</span>
+        <span class="status-tag" id="tag-tg">verificando...</span>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Alertas salvos (últimas análises)</label>
+      <div class="status-row" style="justify-content:center">
+        <span id="total-analyses" style="font-size:.82rem;color:var(--muted);font-family:'Space Mono',monospace">—</span>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-ghost" onclick="closeSettings()">Fechar</button>
+      <button class="btn-primary" id="saveConfigBtn" onclick="saveConfig()">Salvar</button>
+    </div>
+  </div>
+</div>
 
 <!-- HERO -->
 <section class="hero">
@@ -507,12 +688,37 @@
   </div>
 </main>
 
+<!-- HISTORY -->
+<div style="padding: 0 24px 40px; max-width: 1400px; margin: 0 auto;">
+  <div class="section-header" style="margin-bottom:16px">
+    <span class="section-label">Histórico de análises</span>
+    <span id="historyTf" style="font-size:.7rem;font-family:'Space Mono',monospace;color:var(--muted2)"></span>
+  </div>
+  <div class="history-grid">
+    <div class="history-card" id="hist-BTC">
+      <div class="history-header">
+        <span class="history-title">BTC/USDT</span>
+        <span class="history-sub">últimas 20 análises</span>
+      </div>
+      <div style="padding:20px;text-align:center;color:var(--muted2);font-size:.78rem;font-family:'Space Mono',monospace">Aguardando dados...</div>
+    </div>
+    <div class="history-card" id="hist-ETH">
+      <div class="history-header">
+        <span class="history-title">ETH/USDT</span>
+        <span class="history-sub">últimas 20 análises</span>
+      </div>
+      <div style="padding:20px;text-align:center;color:var(--muted2);font-size:.78rem;font-family:'Space Mono',monospace">Aguardando dados...</div>
+    </div>
+  </div>
+</div>
+
 <footer>
-  Dados via <a href="https://cryptocompare.com" target="_blank">CryptoCompare</a> · Atualização automática a cada 5 minutos · Não é conselho financeiro
+  Dados via <a href="https://cryptocompare.com" target="_blank">CryptoCompare</a> · Histórico no <a href="https://supabase.com" target="_blank">Supabase</a> · Alertas via Telegram · Não é conselho financeiro
 </footer>
 
 <script>
 let currentTf = '1h';
+let currentLevel = 1;
 const charts = {};
 
 const SIGNAL_STYLES = {
@@ -739,6 +945,129 @@ async function load() {
   }
 }
 
+// ── Settings ──────────────────────────────────────────────────────────────
+
+function openSettings() {
+  document.getElementById('settingsModal').classList.add('open');
+  checkStatuses();
+}
+function closeSettings() {
+  document.getElementById('settingsModal').classList.remove('open');
+}
+document.getElementById('settingsModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeSettings();
+});
+
+function setLevel(n) {
+  currentLevel = n;
+  document.getElementById('lvl1').classList.toggle('active', n === 1);
+  document.getElementById('lvl2').classList.toggle('active', n === 2);
+}
+
+async function saveConfig() {
+  const btn = document.getElementById('saveConfigBtn');
+  btn.textContent = 'Salvando...';
+  try {
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ min_level: currentLevel }),
+    });
+    btn.textContent = 'Salvo ✓';
+    setTimeout(() => { btn.textContent = 'Salvar'; }, 2000);
+  } catch {
+    btn.textContent = 'Erro';
+    setTimeout(() => { btn.textContent = 'Salvar'; }, 2000);
+  }
+}
+
+async function checkStatuses() {
+  try {
+    const cfg = await fetch('/api/config').then(r => r.json());
+    setLevel(cfg.min_level || 1);
+
+    const hasSb = cfg.min_level !== undefined;
+    document.getElementById('dot-sb').className = 'status-dot ' + (hasSb ? 'ok' : 'warn');
+    document.getElementById('tag-sb').textContent = hasSb ? 'conectado' : 'sem credenciais';
+
+    // count history rows as proxy for telegram working
+    const hist = await fetch(`/api/history/BTC/${currentTf}`).then(r => r.json());
+    const count = Array.isArray(hist) ? hist.length : 0;
+    document.getElementById('total-analyses').textContent =
+      count > 0 ? `${count} análises salvas (BTC · ${currentTf.toUpperCase()})` : 'Nenhuma análise salva ainda';
+
+    document.getElementById('dot-tg').className = 'status-dot ' + (TELEGRAM_CONFIGURED ? 'ok' : 'off');
+    document.getElementById('tag-tg').textContent = TELEGRAM_CONFIGURED ? 'configurado' : 'sem token/chat_id';
+  } catch(e) {
+    document.getElementById('dot-sb').className = 'status-dot warn';
+    document.getElementById('tag-sb').textContent = 'erro de conexão';
+  }
+}
+
+// ── History ───────────────────────────────────────────────────────────────
+
+const SIGNAL_COLORS = {
+  'FORTE COMPRA': '#22c55e',
+  'COMPRA':       '#86efac',
+  'NEUTRO':       '#fde047',
+  'AGUARDAR':     '#fdba74',
+  'NÃO COMPRAR':  '#f87171',
+};
+
+function renderHistory(asset, rows) {
+  const el = document.getElementById(`hist-${asset}`);
+  if (!Array.isArray(rows) || rows.length === 0) {
+    el.querySelector('div') && (el.querySelector('.history-header').nextElementSibling.innerHTML =
+      '<div style="padding:20px;text-align:center;color:var(--muted2);font-size:.78rem;font-family:\'Space Mono\',monospace">Sem histórico ainda — rode a análise primeiro</div>');
+    return;
+  }
+
+  const tbody = rows.map(r => {
+    const color = SIGNAL_COLORS[r.signal] || '#9ca3af';
+    const dt = new Date(r.created_at);
+    const dtStr = dt.toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+    return `<tr>
+      <td>${dtStr}</td>
+      <td><span class="h-pill" style="background:${color}22;color:${color}">${r.signal}</span></td>
+      <td>${r.score}</td>
+      <td>$${parseFloat(r.price).toLocaleString('en-US',{minimumFractionDigits:0})}</td>
+      <td>${r.rsi}</td>
+    </tr>`;
+  }).join('');
+
+  // replace inner content but keep header
+  const inner = el.querySelector('.history-header');
+  inner.insertAdjacentHTML('afterend', `
+    <table class="history-table">
+      <thead><tr>
+        <th>Data</th><th>Sinal</th><th>Score</th><th>Preço</th><th>RSI</th>
+      </tr></thead>
+      <tbody>${tbody}</tbody>
+    </table>
+  `);
+  // remove old placeholder
+  const old = el.querySelector('div:not(.history-header)');
+  if (old) old.remove();
+}
+
+async function loadHistory() {
+  document.getElementById('historyTf').textContent = currentTf.toUpperCase();
+  for (const asset of ['BTC', 'ETH']) {
+    try {
+      const rows = await fetch(`/api/history/${asset}/${currentTf}`).then(r => r.json());
+      // reset card content
+      const el = document.getElementById(`hist-${asset}`);
+      const header = el.querySelector('.history-header').outerHTML;
+      el.innerHTML = header;
+      renderHistory(asset, rows);
+    } catch(e) { /* silently skip */ }
+  }
+}
+
+// ── Events ────────────────────────────────────────────────────────────────
+
+let TELEGRAM_CONFIGURED = false;
+
 document.querySelectorAll('.tf-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
@@ -749,6 +1078,47 @@ document.querySelectorAll('.tf-btn').forEach(btn => {
 });
 
 document.getElementById('refreshBtn').addEventListener('click', load);
+document.getElementById('settingsBtn').addEventListener('click', openSettings);
+
+async function load() {
+  document.getElementById('loading').style.display = 'flex';
+  const btn = document.getElementById('refreshBtn');
+  btn.classList.add('spinning');
+
+  try {
+    const res = await fetch(`/api/analysis/${currentTf}`);
+    const data = await res.json();
+
+    const cfg = data.config || {};
+    currentLevel = cfg.min_level || 1;
+    // heuristic: if config loaded from DB it means supabase is wired up
+    TELEGRAM_CONFIGURED = false; // can't know from frontend, set via env
+
+    const ts = data.updated_at;
+    document.getElementById('updated').textContent = ts;
+    document.getElementById('updated2').textContent = ts;
+
+    for (const [asset, assetData] of Object.entries(data.assets)) {
+      if (assetData.error) {
+        document.getElementById(`card-${asset}`).innerHTML =
+          `<div class="error-msg">Erro ao carregar ${asset}: ${assetData.error}</div>`;
+      } else {
+        renderCard(asset, assetData);
+        if (asset === 'BTC') document.getElementById('stat-btc').textContent =
+          '$' + assetData.signal.price.toLocaleString('en-US',{minimumFractionDigits:0});
+        if (asset === 'ETH') document.getElementById('stat-eth').textContent =
+          '$' + assetData.signal.price.toLocaleString('en-US',{minimumFractionDigits:2});
+      }
+    }
+
+    await loadHistory();
+  } catch(e) {
+    console.error(e);
+  } finally {
+    document.getElementById('loading').style.display = 'none';
+    btn.classList.remove('spinning');
+  }
+}
 
 load();
 setInterval(load, 5 * 60 * 1000);

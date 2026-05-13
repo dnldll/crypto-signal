@@ -1,215 +1,270 @@
-from flask import Flask, jsonify, render_template
+import os
+import json
 import requests
 import pandas as pd
 import numpy as np
 from datetime import datetime
+from flask import Flask, jsonify, render_template, request as flask_request
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 
-# CryptoCompare — funciona de qualquer servidor cloud (sem bloqueio de IP)
-CC_BASE = "https://min-api.cryptocompare.com/data/v2"
-PAIRS = {"BTC": "BTC", "ETH": "ETH"}
-TIMEFRAMES = {"1h": "histohour", "4h": "histohour", "1d": "histoday"}
+CC_BASE            = "https://min-api.cryptocompare.com/data/v2"
+PAIRS              = {"BTC": "BTC", "ETH": "ETH"}
+TIMEFRAMES         = {"1h": "histohour", "4h": "histohour", "1d": "histoday"}
+
+SUPABASE_URL       = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY       = os.environ.get("SUPABASE_KEY", "")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
+
+BUY_SIGNALS = {1: ["COMPRA", "FORTE COMPRA"], 2: ["FORTE COMPRA"]}
 
 
-# ── Indicadores manuais (sem pandas-ta) ──
+# ── Supabase helpers ──────────────────────────────────────────────────────────
 
-def calc_ema(series: pd.Series, length: int) -> pd.Series:
-    return series.ewm(span=length, adjust=False).mean()
+def _sb_headers(prefer_return=False):
+    h = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+    }
+    if prefer_return:
+        h["Prefer"] = "return=minimal"
+    return h
 
-def calc_sma(series: pd.Series, length: int) -> pd.Series:
-    return series.rolling(window=length).mean()
+def sb_insert(table: str, data: dict):
+    if not SUPABASE_URL:
+        return
+    requests.post(
+        f"{SUPABASE_URL}/rest/v1/{table}",
+        headers=_sb_headers(prefer_return=True),
+        json=data,
+        timeout=5,
+    )
 
-def calc_rsi(series: pd.Series, length: int = 14) -> pd.Series:
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(com=length - 1, min_periods=length).mean()
-    avg_loss = loss.ewm(com=length - 1, min_periods=length).mean()
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
+def sb_select(table: str, params: dict) -> list:
+    if not SUPABASE_URL:
+        return []
+    resp = requests.get(
+        f"{SUPABASE_URL}/rest/v1/{table}",
+        headers=_sb_headers(),
+        params=params,
+        timeout=5,
+    )
+    return resp.json() if resp.ok else []
 
-def calc_macd(series: pd.Series, fast=12, slow=26, signal=9):
-    ema_fast = calc_ema(series, fast)
-    ema_slow = calc_ema(series, slow)
-    macd_line = ema_fast - ema_slow
-    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-    histogram = macd_line - signal_line
-    return macd_line, signal_line, histogram
+def sb_patch(table: str, match: dict, data: dict):
+    if not SUPABASE_URL:
+        return
+    params = {k: f"eq.{v}" for k, v in match.items()}
+    requests.patch(
+        f"{SUPABASE_URL}/rest/v1/{table}",
+        headers=_sb_headers(prefer_return=True),
+        params=params,
+        json=data,
+        timeout=5,
+    )
 
+
+# ── Telegram ──────────────────────────────────────────────────────────────────
+
+def send_telegram(asset: str, timeframe: str, signal: dict):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    emoji = "🟢🟢" if signal["signal"] == "FORTE COMPRA" else "🟢"
+    reasons_txt = "\n".join(f"  ✓ {r}" for r in signal["reasons"])
+    text = (
+        f"{emoji} *{signal['signal']} — {asset}/USDT*\n\n"
+        f"💰 Preço: `${signal['price']:,.2f}`\n"
+        f"📊 Score: `{signal['score']}/10`\n"
+        f"📈 RSI: `{signal['rsi']}` — timeframe `{timeframe.upper()}`\n\n"
+        f"*Motivos:*\n{reasons_txt}\n\n"
+        f"🕐 {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+    )
+    requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+        json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"},
+        timeout=8,
+    )
+
+
+# ── Indicadores ───────────────────────────────────────────────────────────────
+
+def calc_ema(s, n): return s.ewm(span=n, adjust=False).mean()
+def calc_sma(s, n): return s.rolling(window=n).mean()
+
+def calc_rsi(s, n=14):
+    d = s.diff()
+    g = d.clip(lower=0).ewm(com=n-1, min_periods=n).mean()
+    l = (-d.clip(upper=0)).ewm(com=n-1, min_periods=n).mean()
+    return 100 - 100 / (1 + g / l)
+
+def calc_macd(s, fast=12, slow=26, sig=9):
+    m = calc_ema(s, fast) - calc_ema(s, slow)
+    sl = m.ewm(span=sig, adjust=False).mean()
+    return m, sl, m - sl
+
+
+# ── Dados ─────────────────────────────────────────────────────────────────────
 
 def fetch_klines(symbol: str, timeframe: str) -> pd.DataFrame:
-    # 4H: busca 1000 candles de 1h e reamostra em 4h
     endpoint = TIMEFRAMES[timeframe]
     limit = 1000 if timeframe == "4h" else 250
-
-    url = f"{CC_BASE}/{endpoint}"
-    params = {"fsym": symbol, "tsym": "USDT", "limit": limit}
-    resp = requests.get(url, params=params, timeout=10)
+    resp = requests.get(
+        f"{CC_BASE}/{endpoint}",
+        params={"fsym": symbol, "tsym": "USDT", "limit": limit},
+        timeout=10,
+    )
     resp.raise_for_status()
     raw = resp.json()
-
     if raw.get("Response") == "Error":
         raise ValueError(raw.get("Message", "CryptoCompare error"))
 
-    candles = raw["Data"]["Data"]
-    df = pd.DataFrame(candles)
-    df = df.rename(columns={"time": "open_time", "volumefrom": "volume"})
-    df["open_time"] = pd.to_datetime(df["open_time"], unit="s")
-    df = df[["open_time", "open", "high", "low", "close", "volume"]].astype(
-        {"open": float, "high": float, "low": float, "close": float, "volume": float}
+    df = pd.DataFrame(raw["Data"]["Data"]).rename(
+        columns={"time": "open_time", "volumefrom": "volume"}
     )
+    df["open_time"] = pd.to_datetime(df["open_time"], unit="s")
+    df = df[["open_time", "open", "high", "low", "close", "volume"]].astype(float,errors="ignore")
+    df["open_time"] = pd.to_datetime(df["open_time"])
 
     if timeframe == "4h":
-        df = df.set_index("open_time").resample("4h").agg(
-            open=("open", "first"),
-            high=("high", "max"),
-            low=("low", "min"),
-            close=("close", "last"),
-            volume=("volume", "sum"),
-        ).dropna().reset_index()
-
+        df = (
+            df.set_index("open_time")
+            .resample("4h")
+            .agg(open=("open","first"), high=("high","max"),
+                 low=("low","min"), close=("close","last"), volume=("volume","sum"))
+            .dropna()
+            .reset_index()
+        )
     return df
 
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    df["rsi"] = calc_rsi(df["close"], 14)
-    df["ema9"] = calc_ema(df["close"], 9)
-    df["ema21"] = calc_ema(df["close"], 21)
-    df["ema50"] = calc_ema(df["close"], 50)
-    df["ema200"] = calc_ema(df["close"], 200)
+    df["rsi"]        = calc_rsi(df["close"])
+    df["ema9"]       = calc_ema(df["close"], 9)
+    df["ema21"]      = calc_ema(df["close"], 21)
+    df["ema50"]      = calc_ema(df["close"], 50)
+    df["ema200"]     = calc_ema(df["close"], 200)
     df["macd"], df["macd_signal"], df["macd_hist"] = calc_macd(df["close"])
-    df["vol_ma20"] = calc_sma(df["volume"], 20)
+    df["vol_ma20"]   = calc_sma(df["volume"], 20)
     return df
 
 
 def generate_signal(df: pd.DataFrame) -> dict:
-    row = df.iloc[-1]
-    prev = df.iloc[-2]
-    score = 0
-    reasons = []
-    warnings = []
+    row, prev = df.iloc[-1], df.iloc[-2]
+    score, reasons, warnings = 0, [], []
 
     rsi = row["rsi"]
-    if rsi < 30:
-        score += 3
-        reasons.append(f"RSI em zona de sobrevenda extrema ({rsi:.1f})")
-    elif rsi < 40:
-        score += 2
-        reasons.append(f"RSI em zona de sobrevenda ({rsi:.1f})")
-    elif rsi < 50:
-        score += 1
-        reasons.append(f"RSI neutro-baixo ({rsi:.1f})")
-    elif rsi > 70:
-        score -= 2
-        warnings.append(f"RSI sobrecomprado ({rsi:.1f}) — evitar entrada")
+    if   rsi < 30: score += 3; reasons.append(f"RSI em sobrevenda extrema ({rsi:.1f})")
+    elif rsi < 40: score += 2; reasons.append(f"RSI em sobrevenda ({rsi:.1f})")
+    elif rsi < 50: score += 1; reasons.append(f"RSI neutro-baixo ({rsi:.1f})")
+    elif rsi > 70: score -= 2; warnings.append(f"RSI sobrecomprado ({rsi:.1f})")
 
     price = row["close"]
     if price > row["ema200"]:
-        score += 1
-        reasons.append("Preço acima da EMA 200 (tendência de alta)")
+        score += 1; reasons.append("Preço acima da EMA 200 (tendência de alta)")
     else:
-        score -= 1
-        warnings.append("Preço abaixo da EMA 200 (tendência de baixa)")
+        score -= 1; warnings.append("Preço abaixo da EMA 200 (tendência de baixa)")
 
     if row["ema9"] > row["ema21"] and prev["ema9"] <= prev["ema21"]:
-        score += 2
-        reasons.append("Cruzamento de alta: EMA 9 cruzou acima da EMA 21")
+        score += 2; reasons.append("Cruzamento de alta: EMA 9 × EMA 21")
     elif row["ema9"] > row["ema21"]:
-        score += 1
-        reasons.append("EMA 9 acima da EMA 21 (momentum positivo)")
+        score += 1; reasons.append("EMA 9 acima da EMA 21 (momentum positivo)")
     else:
-        score -= 1
-        warnings.append("EMA 9 abaixo da EMA 21 (momentum negativo)")
+        score -= 1; warnings.append("EMA 9 abaixo da EMA 21 (momentum negativo)")
 
     if price > row["ema50"] and prev["close"] <= prev["ema50"]:
-        score += 2
-        reasons.append("Rompimento acima da EMA 50")
+        score += 2; reasons.append("Rompimento acima da EMA 50")
 
-    macd = row["macd"]
-    macd_sig = row["macd_signal"]
-    macd_hist = row["macd_hist"]
-    prev_hist = prev["macd_hist"]
-
+    macd, macd_sig = row["macd"], row["macd_signal"]
     if macd > macd_sig and prev["macd"] <= prev["macd_signal"]:
-        score += 2
-        reasons.append("Cruzamento de alta no MACD")
+        score += 2; reasons.append("Cruzamento de alta no MACD")
     elif macd > macd_sig:
-        score += 1
-        reasons.append("MACD positivo (bull)")
+        score += 1; reasons.append("MACD positivo (bull)")
     else:
-        score -= 1
-        warnings.append("MACD negativo (bear)")
+        score -= 1; warnings.append("MACD negativo (bear)")
 
-    if macd_hist > 0 and prev_hist < 0:
-        score += 1
-        reasons.append("Histograma MACD virou positivo")
-    elif macd_hist > prev_hist and macd_hist < 0:
-        score += 1
-        reasons.append("Histograma MACD em recuperação")
+    if row["macd_hist"] > 0 and prev["macd_hist"] < 0:
+        score += 1; reasons.append("Histograma MACD virou positivo")
+    elif row["macd_hist"] > prev["macd_hist"] and row["macd_hist"] < 0:
+        score += 1; reasons.append("Histograma MACD em recuperação")
 
-    vol = row["volume"]
-    vol_ma = row["vol_ma20"]
+    vol, vol_ma = row["volume"], row["vol_ma20"]
     if vol > vol_ma * 1.5:
-        score += 1
-        reasons.append(f"Volume {vol/vol_ma:.1f}x acima da média — confirmação forte")
+        score += 1; reasons.append(f"Volume {vol/vol_ma:.1f}x acima da média")
     elif vol > vol_ma:
-        score += 0.5
-        reasons.append("Volume acima da média")
+        score += 0.5; reasons.append("Volume acima da média")
 
-    if score >= 6:
-        signal = "FORTE COMPRA"
-    elif score >= 3:
-        signal = "COMPRA"
-    elif score >= 1:
-        signal = "NEUTRO"
-    elif score >= -1:
-        signal = "AGUARDAR"
-    else:
-        signal = "NÃO COMPRAR"
+    label = ("FORTE COMPRA" if score >= 6 else "COMPRA" if score >= 3
+             else "NEUTRO" if score >= 1 else "AGUARDAR" if score >= -1
+             else "NÃO COMPRAR")
 
     return {
-        "signal": signal,
-        "score": round(score, 1),
-        "rsi": round(rsi, 2),
-        "price": round(price, 2),
-        "ema9": round(row["ema9"], 2),
-        "ema21": round(row["ema21"], 2),
-        "ema50": round(row["ema50"], 2),
-        "ema200": round(row["ema200"], 2),
-        "macd": round(macd, 4),
-        "macd_signal": round(macd_sig, 4),
-        "volume": round(vol, 2),
-        "vol_ma20": round(vol_ma, 2),
-        "reasons": reasons,
-        "warnings": warnings,
+        "signal": label, "score": round(score, 1),
+        "rsi": round(rsi, 2), "price": round(price, 2),
+        "ema9": round(row["ema9"], 2), "ema21": round(row["ema21"], 2),
+        "ema50": round(row["ema50"], 2), "ema200": round(row["ema200"], 2),
+        "macd": round(macd, 4), "macd_signal": round(macd_sig, 4),
+        "volume": round(vol, 2), "vol_ma20": round(vol_ma, 2),
+        "reasons": reasons, "warnings": warnings,
     }
 
 
 def build_chart_data(df: pd.DataFrame) -> list:
-    candles = []
-    for _, row in df.tail(60).iterrows():
-        def safe(v):
-            return round(float(v), 6) if pd.notna(v) and not np.isinf(v) else None
-        candles.append({
-            "time": int(row["open_time"].timestamp()),
-            "open": safe(row["open"]),
-            "high": safe(row["high"]),
-            "low": safe(row["low"]),
-            "close": safe(row["close"]),
-            "volume": safe(row["volume"]),
-            "ema9": safe(row["ema9"]),
-            "ema21": safe(row["ema21"]),
-            "ema50": safe(row["ema50"]),
-            "ema200": safe(row["ema200"]),
-            "macd": safe(row["macd"]),
-            "macd_signal": safe(row["macd_signal"]),
-            "macd_hist": safe(row["macd_hist"]),
-            "rsi": safe(row["rsi"]),
-        })
-    return candles
+    def safe(v):
+        return round(float(v), 6) if pd.notna(v) and not np.isinf(v) else None
+    return [
+        {
+            "time": int(r["open_time"].timestamp()),
+            **{k: safe(r[k]) for k in ["open","high","low","close","volume",
+                                        "ema9","ema21","ema50","ema200",
+                                        "macd","macd_signal","macd_hist","rsi"]}
+        }
+        for _, r in df.tail(60).iterrows()
+    ]
 
+
+# ── Alert logic ───────────────────────────────────────────────────────────────
+
+def get_alert_config() -> dict:
+    rows = sb_select("alert_config", {"id": "eq.1"})
+    return rows[0] if rows else {"min_level": 1}
+
+def get_last_signal(asset: str, timeframe: str) -> str | None:
+    rows = sb_select("analyses", {
+        "asset": f"eq.{asset}",
+        "timeframe": f"eq.{timeframe}",
+        "order": "created_at.desc",
+        "limit": "1",
+        "select": "signal",
+    })
+    return rows[0]["signal"] if rows else None
+
+def save_and_alert(asset: str, timeframe: str, signal: dict, config: dict):
+    sb_insert("analyses", {
+        "asset": asset, "timeframe": timeframe,
+        "signal": signal["signal"], "score": signal["score"],
+        "price": signal["price"], "rsi": signal["rsi"],
+        "ema9": signal["ema9"], "ema21": signal["ema21"],
+        "ema50": signal["ema50"], "ema200": signal["ema200"],
+        "macd": signal["macd"],
+        "reasons": json.dumps(signal["reasons"]),
+        "warnings": json.dumps(signal["warnings"]),
+    })
+
+    min_level = config.get("min_level", 1)
+    buy_set   = BUY_SIGNALS.get(min_level, BUY_SIGNALS[1])
+    last      = get_last_signal(asset, timeframe)
+
+    if signal["signal"] in buy_set and last not in buy_set:
+        send_telegram(asset, timeframe, signal)
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -221,25 +276,56 @@ def analysis(timeframe):
     if timeframe not in TIMEFRAMES:
         return jsonify({"error": "Timeframe inválido"}), 400
 
+    config = get_alert_config()
     result = {
         "timeframe": timeframe,
         "updated_at": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-        "assets": {}
+        "assets": {},
+        "config": config,
     }
 
     for asset, symbol in PAIRS.items():
         try:
-            df = fetch_klines(symbol, timeframe)
-            df = compute_indicators(df)
+            df  = fetch_klines(symbol, timeframe)
+            df  = compute_indicators(df)
+            sig = generate_signal(df)
+            save_and_alert(asset, timeframe, sig, config)
             result["assets"][asset] = {
                 "symbol": symbol,
-                "signal": generate_signal(df),
+                "signal": sig,
                 "chart": build_chart_data(df),
             }
         except Exception as e:
             result["assets"][asset] = {"error": str(e)}
 
     return jsonify(result)
+
+
+@app.route("/api/config", methods=["GET"])
+def get_config():
+    return jsonify(get_alert_config())
+
+
+@app.route("/api/config", methods=["POST"])
+def update_config():
+    data = flask_request.get_json()
+    min_level = int(data.get("min_level", 1))
+    if min_level not in (1, 2):
+        return jsonify({"error": "min_level deve ser 1 ou 2"}), 400
+    sb_patch("alert_config", {"id": 1}, {"min_level": min_level, "updated_at": "now()"})
+    return jsonify({"ok": True, "min_level": min_level})
+
+
+@app.route("/api/history/<asset>/<timeframe>")
+def history(asset, timeframe):
+    rows = sb_select("analyses", {
+        "asset": f"eq.{asset.upper()}",
+        "timeframe": f"eq.{timeframe}",
+        "order": "created_at.desc",
+        "limit": "20",
+        "select": "signal,score,price,rsi,created_at",
+    })
+    return jsonify(rows)
 
 
 if __name__ == "__main__":
