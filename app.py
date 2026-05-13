@@ -349,5 +349,30 @@ def history(asset, timeframe):
     return jsonify(rows)
 
 
+@app.route("/api/cron")
+def cron():
+    """Endpoint chamado pelo cron-job.org a cada X minutos."""
+    secret = flask_request.args.get("secret", "")
+    cron_secret = os.environ.get("CRON_SECRET", "")
+    if cron_secret and secret != cron_secret:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    config = get_alert_config()
+    results = {}
+    for timeframe in ["1h", "4h"]:
+        for asset, symbol in PAIRS.items():
+            key = f"{asset}_{timeframe}"
+            try:
+                df  = fetch_klines(symbol, timeframe)
+                df  = compute_indicators(df)
+                sig = generate_signal(df)
+                save_and_alert(asset, timeframe, sig, config)
+                results[key] = {"signal": sig["signal"], "score": sig["score"], "price": sig["price"]}
+            except Exception as e:
+                results[key] = {"error": str(e)}
+
+    return jsonify({"ok": True, "ran_at": datetime.now().isoformat(), "results": results})
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5050)
