@@ -245,6 +245,12 @@ def get_last_signal(asset: str, timeframe: str) -> str | None:
     return rows[0]["signal"] if rows else None
 
 def save_and_alert(asset: str, timeframe: str, signal: dict, config: dict):
+    # 1. Lê o último sinal ANTES de salvar o novo
+    min_level = config.get("min_level", 1)
+    buy_set   = BUY_SIGNALS.get(min_level, BUY_SIGNALS[1])
+    last      = get_last_signal(asset, timeframe)
+
+    # 2. Salva a nova análise
     sb_insert("analyses", {
         "asset": asset, "timeframe": timeframe,
         "signal": signal["signal"], "score": signal["score"],
@@ -256,10 +262,7 @@ def save_and_alert(asset: str, timeframe: str, signal: dict, config: dict):
         "warnings": json.dumps(signal["warnings"]),
     })
 
-    min_level = config.get("min_level", 1)
-    buy_set   = BUY_SIGNALS.get(min_level, BUY_SIGNALS[1])
-    last      = get_last_signal(asset, timeframe)
-
+    # 3. Alerta só se transitou de não-compra para compra
     if signal["signal"] in buy_set and last not in buy_set:
         send_telegram(asset, timeframe, signal)
 
