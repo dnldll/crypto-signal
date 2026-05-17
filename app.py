@@ -292,7 +292,7 @@ def analysis(timeframe):
             df  = fetch_klines(symbol, timeframe)
             df  = compute_indicators(df)
             sig = generate_signal(df)
-            save_and_alert(asset, timeframe, sig, config)
+            # Apenas exibe — quem salva e alerta é o /api/cron
             result["assets"][asset] = {
                 "symbol": symbol,
                 "signal": sig,
