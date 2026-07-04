@@ -111,7 +111,24 @@ def calc_macd(s, fast=12, slow=26, sig=9):
 
 # ── Dados ─────────────────────────────────────────────────────────────────────
 
+CACHE_TTL = {"1h": 300, "4h": 900, "1d": 3600}
+_cache = {}
+
+def _cache_get(key: str, ttl: int):
+    entry = _cache.get(key)
+    if entry and (datetime.now() - entry["ts"]).total_seconds() < ttl:
+        return entry["df"]
+    return None
+
+def _cache_set(key: str, df):
+    _cache[key] = {"df": df, "ts": datetime.now()}
+
 def fetch_klines(symbol: str, timeframe: str) -> pd.DataFrame:
+    cache_key = f"{symbol}_{timeframe}"
+    cached = _cache_get(cache_key, CACHE_TTL[timeframe])
+    if cached is not None:
+        return cached
+
     endpoint = TIMEFRAMES[timeframe]
     limit = 1000 if timeframe == "4h" else 250
     resp = requests.get(
@@ -140,6 +157,7 @@ def fetch_klines(symbol: str, timeframe: str) -> pd.DataFrame:
             .dropna()
             .reset_index()
         )
+    _cache_set(cache_key, df)
     return df
 
 
