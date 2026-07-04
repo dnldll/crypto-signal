@@ -17,8 +17,9 @@ TIMEFRAMES         = {"1h": "histohour", "4h": "histohour", "1d": "histoday"}
 
 SUPABASE_URL       = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY       = os.environ.get("SUPABASE_KEY", "")
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
+TELEGRAM_BOT_TOKEN    = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID      = os.environ.get("TELEGRAM_CHAT_ID", "")
+CRYPTOCOMPARE_API_KEY = os.environ.get("CRYPTOCOMPARE_API_KEY", "")
 
 BUY_SIGNALS = {1: ["COMPRA", "FORTE COMPRA"], 2: ["FORTE COMPRA"]}
 
@@ -115,7 +116,7 @@ def fetch_klines(symbol: str, timeframe: str) -> pd.DataFrame:
     limit = 1000 if timeframe == "4h" else 250
     resp = requests.get(
         f"{CC_BASE}/{endpoint}",
-        params={"fsym": symbol, "tsym": "USDT", "limit": limit},
+        params={"fsym": symbol, "tsym": "USDT", "limit": limit, "api_key": CRYPTOCOMPARE_API_KEY},
         timeout=10,
     )
     resp.raise_for_status()
